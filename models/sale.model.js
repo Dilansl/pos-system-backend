@@ -10,7 +10,6 @@ const SaleModel = {
     try {
       await client.query('BEGIN');
 
-      // 1. Insert sale header
       const { rows: [sale] } = await client.query(
         `INSERT INTO sales
            (shift_id, user_id, customer_id, subtotal, discount_amount,
@@ -20,17 +19,22 @@ const SaleModel = {
         [shiftId, userId, customerId, subtotal, discountAmount, taxAmount, total, notes]
       );
 
-      // 2. Insert line items + deduct stock
       for (const item of items) {
+        // Get this variant's cost price to lock it onto the sale
+        const { rows: [variant] } = await client.query(
+          'SELECT cost_price FROM product_variants WHERE id = $1',
+          [item.variantId]
+        );
+        const costPrice = variant?.cost_price || 0;
+
         await client.query(
           `INSERT INTO sale_items
-             (sale_id, variant_id, quantity, unit_price, discount_amount, line_total)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
+            (sale_id, variant_id, quantity, unit_price, discount_amount, line_total, cost_price)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
           [sale.id, item.variantId, item.quantity, item.unitPrice,
-           item.discountAmount || 0, item.lineTotal]
+          item.discountAmount || 0, item.lineTotal, costPrice]
         );
 
-        // Lock stock row to prevent race conditions
         const { rows: [stock] } = await client.query(
           'SELECT * FROM stock WHERE variant_id = $1 FOR UPDATE',
           [item.variantId]
@@ -43,13 +47,11 @@ const SaleModel = {
 
         const newQty = stock.quantity - item.quantity;
 
-        // Deduct stock
         await client.query(
           `UPDATE stock SET quantity = $1, updated_at = NOW() WHERE variant_id = $2`,
           [newQty, item.variantId]
         );
 
-        // Log the stock change
         await client.query(
           `INSERT INTO stock_logs
              (variant_id, user_id, change_type, quantity_before, quantity_change, quantity_after, note)
@@ -59,7 +61,6 @@ const SaleModel = {
         );
       }
 
-      // 3. Insert payments
       for (const payment of payments) {
         await client.query(
           `INSERT INTO payments (sale_id, method, amount, reference)
@@ -68,7 +69,6 @@ const SaleModel = {
         );
       }
 
-      // 4. Update customer loyalty points if customer attached
       if (customerId) {
         const pointsEarned = Math.floor(total / 100);
         await client.query(
@@ -121,6 +121,41 @@ const SaleModel = {
     return { ...sale, items, payments };
   },
 
+  findByReceiptSeq: async (seq) => {
+    const { rows: [sale] } = await query(
+      `SELECT s.*,
+              u.name AS cashier_name,
+              c.name AS customer_name, c.phone AS customer_phone
+       FROM sales s
+       JOIN users u ON s.user_id = u.id
+       LEFT JOIN customers c ON s.customer_id = c.id
+       WHERE s.receipt_seq = $1`,
+      [seq]
+    );
+    if (!sale) return null;
+
+    const { rows: items } = await query(
+      `SELECT si.*, pv.size, pv.color, pv.barcode, p.name AS product_name,
+              COALESCE((
+                SELECT SUM(ri.quantity)::int
+                FROM return_items ri
+                WHERE ri.sale_item_id = si.id
+              ), 0) AS already_returned
+       FROM sale_items si
+       JOIN product_variants pv ON si.variant_id = pv.id
+       JOIN products p ON pv.product_id = p.id
+       WHERE si.sale_id = $1`,
+      [sale.id]
+    );
+
+    const { rows: payments } = await query(
+      'SELECT * FROM payments WHERE sale_id = $1',
+      [sale.id]
+    );
+
+    return { ...sale, items, payments };
+  },
+  
   findAll: async ({ startDate, endDate, userId, status, limit = 50, offset = 0 } = {}) => {
     const conditions = [];
     const params = [];

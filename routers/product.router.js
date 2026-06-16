@@ -50,5 +50,7 @@ router.put('/:id', adminOnly, [
 ], ProductController.update);
 
 router.post('/:id/variants', adminOnly, ProductController.addVariant);
+router.put('/variants/:variantId', adminOnly, ProductController.updateVariant);
+router.delete('/:id', adminOnly, ProductController.delete);
 
 export default router;

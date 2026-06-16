@@ -29,6 +29,19 @@ const SaleController = {
     } catch (err) { next(err); }
   },
 
+  getByReceiptSeq: async (req, res, next) => {
+    try {
+      const sale = await SaleModel.findByReceiptSeq(req.params.seq);
+      if (!sale) {
+        return res.status(404).json({
+          success: false,
+          message: 'Sale not found.',
+        });
+      }
+      res.json({ success: true, data: sale });
+    } catch (err) { next(err); }
+  },
+
   getAll: async (req, res, next) => {
     try {
       const { startDate, endDate, userId, status, limit, offset } = req.query;

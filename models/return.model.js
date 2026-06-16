@@ -16,16 +16,33 @@ const ReturnModel = {
 
       // 2. Insert return items + re-add stock
       for (const item of items) {
+        // ── Guard against double-refunding ──
+        // How many of this sale_item were sold?
+        const { rows: [saleItem] } = await client.query(
+          'SELECT variant_id, quantity FROM sale_items WHERE id = $1',
+          [item.saleItemId]
+        );
+        if (!saleItem) throw new Error('Sale item not found.');
+
+        // How many were already returned in previous returns?
+        const { rows: [{ already_returned }] } = await client.query(
+          `SELECT COALESCE(SUM(quantity), 0)::int AS already_returned
+           FROM return_items WHERE sale_item_id = $1`,
+          [item.saleItemId]
+        );
+
+        const remaining = saleItem.quantity - already_returned;
+        if (item.quantity > remaining) {
+          throw new Error(
+            `Cannot return ${item.quantity} — only ${remaining} left to return for this item.`
+          );
+        }
+
+        // Insert the return line
         await client.query(
           `INSERT INTO return_items (return_id, sale_item_id, quantity, refund_amount)
            VALUES ($1,$2,$3,$4)`,
           [ret.id, item.saleItemId, item.quantity, item.refundAmount]
-        );
-
-        // Get variant id from sale item
-        const { rows: [saleItem] } = await client.query(
-          'SELECT variant_id FROM sale_items WHERE id = $1',
-          [item.saleItemId]
         );
 
         // Lock and read current stock
@@ -52,10 +69,26 @@ const ReturnModel = {
         );
       }
 
-      // 3. Mark original sale as refunded
-      await client.query(
-        `UPDATE sales SET status = 'refunded' WHERE id = $1`,
+      // 3. Decide new sale status: fully refunded vs partially refunded
+      // Compare total sold qty vs total returned qty across the whole sale
+      const { rows: [{ total_sold }] } = await client.query(
+        `SELECT COALESCE(SUM(quantity), 0)::int AS total_sold
+         FROM sale_items WHERE sale_id = $1`,
         [originalSaleId]
+      );
+      const { rows: [{ total_returned }] } = await client.query(
+        `SELECT COALESCE(SUM(ri.quantity), 0)::int AS total_returned
+         FROM return_items ri
+         JOIN sale_items si ON ri.sale_item_id = si.id
+         WHERE si.sale_id = $1`,
+        [originalSaleId]
+      );
+
+      const newStatus = total_returned >= total_sold ? 'refunded' : 'partially_refunded';
+
+      await client.query(
+        `UPDATE sales SET status = $1 WHERE id = $2`,
+        [newStatus, originalSaleId]
       );
 
       await client.query('COMMIT');

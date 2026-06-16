@@ -15,7 +15,29 @@ const ReportModel = {
        WHERE created_at BETWEEN $1 AND $2 AND status != 'held'`,
       [startDate, endDate]
     );
-    return rows[0];
+
+    // Calculate cost of goods sold and profit from completed sales
+    const { rows: profitRows } = await query(
+      `SELECT
+         COALESCE(SUM(si.line_total), 0)                 AS goods_revenue,
+         COALESCE(SUM(si.cost_price * si.quantity), 0)   AS total_cost
+       FROM sale_items si
+       JOIN sales s ON si.sale_id = s.id
+       WHERE s.created_at BETWEEN $1 AND $2 AND s.status = 'completed'`,
+      [startDate, endDate]
+    );
+
+    const goodsRevenue = Number(profitRows[0].goods_revenue);
+    const totalCost = Number(profitRows[0].total_cost);
+    const totalProfit = goodsRevenue - totalCost;
+    const margin = goodsRevenue > 0 ? (totalProfit / goodsRevenue) * 100 : 0;
+
+    return {
+      ...rows[0],
+      total_cost: totalCost,
+      total_profit: totalProfit,
+      profit_margin: margin,
+    };
   },
 
   getSalesByDay: async ({ startDate, endDate }) => {
@@ -36,7 +58,9 @@ const ReportModel = {
     const { rows } = await query(
       `SELECT p.id, p.name AS product_name, pv.size, pv.color,
               SUM(si.quantity)::int  AS units_sold,
-              SUM(si.line_total)     AS total_revenue
+              SUM(si.line_total)     AS total_revenue,
+              SUM(si.cost_price * si.quantity)            AS total_cost,
+              SUM(si.line_total - (si.cost_price * si.quantity)) AS total_profit
        FROM sale_items si
        JOIN sales s ON si.sale_id = s.id
        JOIN product_variants pv ON si.variant_id = pv.id

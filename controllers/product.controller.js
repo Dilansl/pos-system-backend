@@ -53,13 +53,9 @@ const ProductController = {
   search: async (req, res, next) => {
     try {
       const { q } = req.query;
-      if (!q || q.trim().length < 1) {
-        return res.status(400).json({
-          success: false,
-          message: 'Search term is required.',
-        });
-      }
-      const results = await ProductModel.search(q.trim());
+      // Empty query → return all active variants (for the "All Items" button)
+      const term = (q && q.trim().length >= 1) ? q.trim() : '';
+      const results = await ProductModel.search(term);
       res.json({ success: true, data: results });
     } catch (err) { next(err); }
   },
@@ -74,6 +70,8 @@ const ProductController = {
       });
     } catch (err) { next(err); }
   },
+
+  
 
   update: async (req, res, next) => {
     try {
@@ -96,6 +94,32 @@ const ProductController = {
         data: variant,
         message: 'Variant added.',
       });
+    } catch (err) { next(err); }
+  },
+
+  updateVariant: async (req, res, next) => {
+    try {
+      const variant = await ProductModel.updateVariant(req.params.variantId, req.body);
+      if (!variant) {
+        return res.status(404).json({
+          success: false,
+          message: 'Batch (variant) not found.',
+        });
+      }
+      res.json({ success: true, data: variant, message: 'Batch updated.' });
+    } catch (err) { next(err); }
+  },
+
+  delete: async (req, res, next) => {
+    try {
+      const result = await ProductModel.delete(req.params.id);
+      if (result.deactivated) {
+        return res.json({
+          success: true,
+          message: 'Product has sales history, so it was deactivated instead of deleted.',
+        });
+      }
+      res.json({ success: true, message: 'Product deleted.' });
     } catch (err) { next(err); }
   },
 

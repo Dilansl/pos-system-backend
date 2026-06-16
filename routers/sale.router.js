@@ -13,6 +13,8 @@ router.get('/', anyStaff, SaleController.getAll);
 
 router.get('/summary', anyStaff, SaleController.getDailySummary);
 
+router.get('/receipt/:seq', anyStaff, SaleController.getByReceiptSeq);
+
 router.get('/:id', anyStaff, SaleController.getById);
 
 router.post('/', anyStaff, [

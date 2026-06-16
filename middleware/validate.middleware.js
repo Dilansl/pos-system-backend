@@ -6,7 +6,7 @@ export const validate = (req, res, next) => {
   if (!errors.isEmpty()) {
     return res.status(422).json({
       success: false,
-      message: 'Validation failed. Please check your input.',
+      message: 'Validation failed. Please try again.',
       errors: errors.array().map((e) => ({
         field: e.path,
         message: e.msg,
