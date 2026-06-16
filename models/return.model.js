@@ -122,12 +122,29 @@ const ReturnModel = {
 
   findAll: async () => {
     const { rows } = await query(
-      `SELECT r.*, u.name AS staff_name, s.total AS original_total
+      `SELECT r.*, u.name AS staff_name,
+              s.total AS original_total,
+              s.receipt_seq AS receipt_seq
        FROM returns r
        JOIN users u ON r.user_id = u.id
        JOIN sales s ON r.original_sale_id = s.id
        ORDER BY r.created_at DESC`
     );
+
+    // Attach the refunded items (name + barcode + qty) to each return
+    for (const ret of rows) {
+      const { rows: items } = await query(
+        `SELECT ri.quantity, p.name AS product_name, pv.barcode, pv.size, pv.color
+         FROM return_items ri
+         JOIN sale_items si ON ri.sale_item_id = si.id
+         JOIN product_variants pv ON si.variant_id = pv.id
+         JOIN products p ON pv.product_id = p.id
+         WHERE ri.return_id = $1`,
+        [ret.id]
+      );
+      ret.items = items;
+    }
+
     return rows;
   },
 };

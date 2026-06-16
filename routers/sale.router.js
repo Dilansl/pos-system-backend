@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
 import authenticate from '../middleware/auth.middleware.js';
-import { anyStaff } from '../middleware/role.middleware.js';
+import { anyStaff, adminOrManager } from '../middleware/role.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import SaleController from '../controllers/sale.controller.js';
 
@@ -9,7 +9,7 @@ const router = Router();
 
 router.use(authenticate);
 
-router.get('/', anyStaff, SaleController.getAll);
+router.get('/', adminOrManager, SaleController.getAll);
 
 router.get('/summary', anyStaff, SaleController.getDailySummary);
 
