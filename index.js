@@ -12,7 +12,7 @@ import inventoryRouter from './routers/inventory.router.js';
 import customerRouter from './routers/customer.router.js';
 import returnRouter from './routers/return.router.js';
 import reportRouter from './routers/report.router.js';
-
+import shiftRouter from './routers/shift.router.js';
 // Error handler
 import { errorHandler } from './middleware/error.middleware.js';
 
@@ -36,6 +36,7 @@ app.use('/api/inventory', inventoryRouter);
 app.use('/api/customers', customerRouter);
 app.use('/api/returns',   returnRouter);
 app.use('/api/reports',   reportRouter);
+app.use('/api/shifts',    shiftRouter);
 
 // 404
 app.use((req, res) => {

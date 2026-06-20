@@ -1,12 +1,23 @@
 import SaleModel from '../models/sale.model.js';
+import ShiftModel from '../models/shift.model.js';
 
 const SaleController = {
 
   create: async (req, res, next) => {
     try {
+      // A sale requires an open shift for this cashier
+      const shift = await ShiftModel.findOpenByUser(req.user.id);
+      if (!shift) {
+        return res.status(400).json({
+          success: false,
+          message: 'No open shift. Please open a shift before making a sale.',
+        });
+      }
+
       const sale = await SaleModel.create({
         ...req.body,
         userId: req.user.id,
+        shiftId: shift.id,
       });
       res.status(201).json({
         success: true,

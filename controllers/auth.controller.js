@@ -32,10 +32,10 @@ const AuthController = {
       const token = jwt.sign(
         { id: user.id, username: user.username, role: user.role },
         process.env.JWT_SECRET,
-        { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
+        { expiresIn: process.env.JWT_EXPIRES_IN || '12h' }
       );
 
-      // update last login time
+      // update last login time 
       await UserModel.updateLastLogin(user.id);
 
       return res.status(200).json({
