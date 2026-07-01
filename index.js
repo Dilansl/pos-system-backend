@@ -25,15 +25,15 @@ const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173')
 
 app.use(cors({
   origin: (origin, callback) => {
-    // allow requests with no origin (Postman, mobile apps, server-to-server)
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow all if CORS_ORIGINS is '*', or no origin (Postman), or matching origin
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    return callback(new Error('Not allowed by CORS'));
+    return callback(null, false);
   },
   credentials: true,
 }));
-app.use(express.json());
+
 
 // Health check
 app.get('/health', (req, res) => {
