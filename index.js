@@ -34,6 +34,8 @@ app.use(cors({
   credentials: true,
 }));
 
+app.use(express.json());
+
 
 // Health check
 app.get('/health', (req, res) => {
