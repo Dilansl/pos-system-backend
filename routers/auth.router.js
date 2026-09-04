@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { body } from 'express-validator';
 import authenticate from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
+import { loginLimiter } from '../middleware/rateLimit.middleware.js';
 import AuthController from '../controllers/auth.controller.js';
 
 const router = Router();
 
-router.post('/login', [
+router.post('/login', loginLimiter, [
   body('username')
     .trim()
     .notEmpty()

@@ -26,6 +26,12 @@ router.post('/', adminOrManager, [
   body('items')
     .isArray({ min: 1 })
     .withMessage('At least one item is required.'),
+  body('items.*.saleItemId')
+    .isUUID()
+    .withMessage('Invalid sale item ID.'),
+  body('items.*.quantity')
+    .isInt({ min: 1 })
+    .withMessage('Return quantity must be at least 1.'),
   validate,
 ], ReturnController.create);
 

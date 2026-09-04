@@ -2,24 +2,26 @@ import { query, getClient } from '../config/db.js';
 
 const ReturnModel = {
 
-  create: async ({ originalSaleId, userId, refundAmount, refundMethod, reason, items }) => {
+  create: async ({ originalSaleId, userId, refundMethod, reason, items }) => {
     const client = await getClient();
     try {
       await client.query('BEGIN');
 
-      // 1. Insert return header
+      // 1. Insert return header (refund_amount is a placeholder — it's
+      // recomputed from the actual sale prices below and updated before commit).
       const { rows: [ret] } = await client.query(
         `INSERT INTO returns (original_sale_id, user_id, refund_amount, refund_method, reason)
-         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [originalSaleId, userId, refundAmount, refundMethod, reason]
+         VALUES ($1,$2,0,$3,$4) RETURNING *`,
+        [originalSaleId, userId, refundMethod, reason]
       );
 
       // 2. Insert return items + re-add stock
+      let computedRefundTotal = 0;
       for (const item of items) {
         // ── Guard against double-refunding ──
-        // How many of this sale_item were sold?
+        // How many of this sale_item were sold, and at what price?
         const { rows: [saleItem] } = await client.query(
-          'SELECT variant_id, quantity FROM sale_items WHERE id = $1',
+          'SELECT variant_id, quantity, unit_price FROM sale_items WHERE id = $1',
           [item.saleItemId]
         );
         if (!saleItem) throw new Error('Sale item not found.');
@@ -38,11 +40,16 @@ const ReturnModel = {
           );
         }
 
+        // Refund value is derived from the sale's own recorded unit price —
+        // never trust a client-supplied refundAmount.
+        const itemRefundAmount = Number(saleItem.unit_price) * item.quantity;
+        computedRefundTotal += itemRefundAmount;
+
         // Insert the return line
         await client.query(
           `INSERT INTO return_items (return_id, sale_item_id, quantity, refund_amount)
            VALUES ($1,$2,$3,$4)`,
-          [ret.id, item.saleItemId, item.quantity, item.refundAmount]
+          [ret.id, item.saleItemId, item.quantity, itemRefundAmount]
         );
 
         // Lock and read current stock
@@ -50,6 +57,7 @@ const ReturnModel = {
           'SELECT * FROM stock WHERE variant_id = $1 FOR UPDATE',
           [saleItem.variant_id]
         );
+        if (!stock) throw new Error(`No stock record for variant ${saleItem.variant_id}`);
 
         const newQty = stock.quantity + item.quantity;
 
@@ -90,6 +98,12 @@ const ReturnModel = {
         `UPDATE sales SET status = $1 WHERE id = $2`,
         [newStatus, originalSaleId]
       );
+
+      await client.query(
+        `UPDATE returns SET refund_amount = $1 WHERE id = $2`,
+        [computedRefundTotal, ret.id]
+      );
+      ret.refund_amount = computedRefundTotal;
 
       await client.query('COMMIT');
       return ret;
