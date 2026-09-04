@@ -2,7 +2,32 @@ import { query, getClient } from '../config/db.js';
 
 const InventoryModel = {
 
-  findAll: async () => {
+  findAll: async ({ page = 1, limit = 10, search = '' } = {}) => {
+    const conditions = ['p.is_active = true'];
+    const params = [];
+    let i = 1;
+
+    if (search && search.trim()) {
+      conditions.push(
+        `(p.name ILIKE $${i} OR c.name ILIKE $${i} OR pv.barcode ILIKE $${i} OR pv.size ILIKE $${i} OR pv.color ILIKE $${i})`
+      );
+      params.push(`%${search.trim()}%`);
+      i++;
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const { rows: countRows } = await query(
+      `SELECT COUNT(*)::int AS total
+       FROM stock s
+       JOIN product_variants pv ON s.variant_id = pv.id
+       JOIN products p ON pv.product_id = p.id
+       LEFT JOIN categories c ON p.category_id = c.id
+       ${where}`,
+      params
+    );
+    const total = countRows[0].total;
+
     const { rows } = await query(
       `SELECT s.*, pv.size, pv.color, pv.barcode,
               p.id AS product_id, p.name AS product_name,
@@ -12,10 +37,19 @@ const InventoryModel = {
        JOIN product_variants pv ON s.variant_id = pv.id
        JOIN products p ON pv.product_id = p.id
        LEFT JOIN categories c ON p.category_id = c.id
-       WHERE p.is_active = true
-       ORDER BY is_low_stock DESC, p.name ASC`
+       ${where}
+       ORDER BY is_low_stock DESC, p.name ASC
+       LIMIT $${i} OFFSET $${i + 1}`,
+      [...params, limit, (page - 1) * limit]
     );
-    return rows;
+
+    return {
+      items: rows,
+      total,
+      page,
+      limit,
+      totalPages: Math.max(Math.ceil(total / limit), 1),
+    };
   },
 
   findLowStock: async () => {

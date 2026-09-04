@@ -17,18 +17,51 @@ const ProductModel = {
     return rows[0];
   },
 
-  findAll: async ({ includeInactive = false } = {}) => {
+  findAll: async ({ page = 1, limit = 10, search = '', includeInactive = false } = {}) => {
+    const conditions = [];
+    const params = [];
+    let i = 1;
+
+    if (!includeInactive) conditions.push('p.is_active = true');
+
+    if (search && search.trim()) {
+      conditions.push(`(p.name ILIKE $${i} OR c.name ILIKE $${i})`);
+      params.push(`%${search.trim()}%`);
+      i++;
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Total count of matching products (same filters, no LIMIT/OFFSET)
+    const { rows: countRows } = await query(
+      `SELECT COUNT(DISTINCT p.id)::int AS total
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       ${where}`,
+      params
+    );
+    const total = countRows[0].total;
+
     const { rows } = await query(
       `SELECT p.*, c.name AS category_name,
               COUNT(pv.id)::int AS variant_count
        FROM products p
        LEFT JOIN categories c ON p.category_id = c.id
        LEFT JOIN product_variants pv ON pv.product_id = p.id
-       ${includeInactive ? '' : 'WHERE p.is_active = true'}
+       ${where}
        GROUP BY p.id, c.name
-       ORDER BY p.name ASC`
+       ORDER BY p.name ASC
+       LIMIT $${i} OFFSET $${i + 1}`,
+      [...params, limit, (page - 1) * limit]
     );
-    return rows;
+
+    return {
+      products: rows,
+      total,
+      page,
+      limit,
+      totalPages: Math.max(Math.ceil(total / limit), 1),
+    };
   },
 
   findById: async (id) => {
