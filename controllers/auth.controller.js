@@ -2,6 +2,11 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import UserModel from '../models/user.model.js';
 
+// Compared against when the username doesn't exist, so a login attempt for a
+// nonexistent user still pays the bcrypt cost — this keeps response timing
+// from leaking which usernames are valid.
+const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 12);
+
 const AuthController = {
 
   login: async (req, res, next) => {
@@ -11,17 +16,11 @@ const AuthController = {
       // find user by username
       const user = await UserModel.findByUsername(username);
 
-      // deliberately vague message — don't reveal which field is wrong
-      if (!user || !user.is_active) {
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid username or password.',
-        });
-      }
+      // Always run bcrypt.compare, valid user or not, to avoid a timing side-channel.
+      const passwordValid = await bcrypt.compare(password, user?.password_hash || DUMMY_HASH);
 
-      // check password
-      const passwordValid = await bcrypt.compare(password, user.password_hash);
-      if (!passwordValid) {
+      // deliberately vague message — don't reveal which field is wrong
+      if (!user || !user.is_active || !passwordValid) {
         return res.status(401).json({
           success: false,
           message: 'Invalid username or password.',

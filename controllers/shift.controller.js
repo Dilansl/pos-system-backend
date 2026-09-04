@@ -25,7 +25,7 @@ const ShiftController = {
       const { openingCash, notes } = req.body;
       const shift = await ShiftModel.open({
         userId: req.user.id,
-        openingCash: Number(openingCash) || 0,
+        openingCash: Number(openingCash),
         notes,
       });
       res.status(201).json({ success: true, data: shift, message: 'Shift opened.' });
@@ -45,7 +45,7 @@ const ShiftController = {
 
       const { closingCash, notes } = req.body;
       const closed = await ShiftModel.close(open.id, {
-        closingCash: Number(closingCash) || 0,
+        closingCash: Number(closingCash),
         notes,
       });
       res.json({ success: true, data: closed, message: 'Shift closed.' });

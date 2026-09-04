@@ -16,6 +16,12 @@ import shiftRouter from './routers/shift.router.js';
 // Error handler
 import { errorHandler } from './middleware/error.middleware.js';
 
+// Fail fast at boot rather than only on the first login attempt.
+if (!process.env.JWT_SECRET) {
+  console.error('❌ JWT_SECRET is not set. Set it in the environment before starting the server.');
+  process.exit(1);
+}
+
 const app = express();
 
 // Middleware
@@ -23,6 +29,9 @@ const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173')
   .split(',')
   .map((o) => o.trim());
 
+// Auth is a Bearer JWT in the Authorization header, not a cookie, so this
+// API never needs `credentials: true` — reflecting an Origin without it
+// carries no credentialed-CORS risk even when CORS_ORIGINS is '*'.
 app.use(cors({
   origin: (origin, callback) => {
     // Allow all if CORS_ORIGINS is '*', or no origin (Postman), or matching origin
@@ -31,7 +40,6 @@ app.use(cors({
     }
     return callback(null, false);
   },
-  credentials: true,
 }));
 
 app.use(express.json());

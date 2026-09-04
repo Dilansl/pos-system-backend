@@ -11,7 +11,7 @@ const UserModel = {
 
   findById: async (id) => {
     const { rows } = await query(
-      'SELECT id, name, username, role, is_active, created_at, last_login FROM users WHERE id = $1',
+      'SELECT id, name, username, role, is_active, created_at, last_login, token_valid_after FROM users WHERE id = $1',
       [id]
     );
     return rows[0] || null;
@@ -45,15 +45,22 @@ const UserModel = {
   },
 
   updatePassword: async (id, passwordHash) => {
+    // Also revokes existing sessions — a password reset should log out
+    // whoever was previously signed in, same as any account with real auth.
     await query(
-      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      'UPDATE users SET password_hash = $1, token_valid_after = NOW() WHERE id = $2',
       [passwordHash, id]
     );
   },
 
   setActive: async (id, isActive) => {
+    // Deactivating also revokes existing sessions — otherwise a fired/suspended
+    // user's still-valid JWT keeps working for up to JWT_EXPIRES_IN regardless.
     const { rows } = await query(
-      `UPDATE users SET is_active = $1 WHERE id = $2
+      `UPDATE users
+       SET is_active = $1,
+           token_valid_after = CASE WHEN $1 = false THEN NOW() ELSE token_valid_after END
+       WHERE id = $2
        RETURNING id, name, username, role, is_active`,
       [isActive, id]
     );

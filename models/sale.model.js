@@ -1,38 +1,127 @@
 import { query, getClient } from '../config/db.js';
+import SyncQueueModel from './syncQueue.model.js';
 
 const SaleModel = {
 
   create: async (saleData) => {
-    const { shiftId, userId, customerId, subtotal, discountAmount,
-            taxAmount, total, notes, items, payments } = saleData;
+    const { shiftId, userId, customerId, taxAmount, notes, items, payments, idempotencyKey, offlineRetry } = saleData;
+
+    // Replay protection: if this exact checkout attempt already went through
+    // (e.g. the client retried after a network timeout), return the sale that
+    // was already created instead of processing it again.
+    const { rows: [existing] } = await query(
+      'SELECT * FROM sales WHERE idempotency_key = $1',
+      [idempotencyKey]
+    );
+    if (existing) return existing;
 
     const client = await getClient();
     try {
       await client.query('BEGIN');
 
-      const { rows: [sale] } = await client.query(
-        `INSERT INTO sales
-           (shift_id, user_id, customer_id, subtotal, discount_amount,
-            tax_amount, total, notes, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'completed')
-         RETURNING *`,
-        [shiftId, userId, customerId, subtotal, discountAmount, taxAmount, total, notes]
-      );
+      // Price every item from the DB — never trust client-supplied unitPrice/lineTotal.
+      let subtotal = 0;
+      let discountAmount = 0;
+      const pricedItems = [];
 
       for (const item of items) {
-        // Get this variant's cost price to lock it onto the sale
         const { rows: [variant] } = await client.query(
-          'SELECT cost_price FROM product_variants WHERE id = $1',
+          `SELECT pv.price_override, pv.cost_price, p.base_price,
+                  pv.promo_type AS variant_promo_type, pv.promo_value AS variant_promo_value,
+                  p.promo_type AS product_promo_type, p.promo_value AS product_promo_value
+           FROM product_variants pv
+           JOIN products p ON pv.product_id = p.id
+           WHERE pv.id = $1`,
           [item.variantId]
         );
-        const costPrice = variant?.cost_price || 0;
+        if (!variant) throw new Error(`Variant ${item.variantId} not found.`);
 
+        const unitPrice = Number(variant.price_override ?? variant.base_price);
+        const lineGross = unitPrice * item.quantity;
+
+        // Standing promo (variant clearance wins over product-level promo) is
+        // product config, not user input — computed here, never trusted from the client.
+        const promoType = variant.variant_promo_type || variant.product_promo_type || null;
+        const promoValue = Number(
+          variant.variant_promo_type ? variant.variant_promo_value : variant.product_promo_value
+        ) || 0;
+        let promoDiscount = 0;
+        if (promoType && promoValue) {
+          promoDiscount = promoType === 'percent'
+            ? lineGross * (promoValue / 100)
+            : promoValue * item.quantity;
+        }
+        promoDiscount = Math.min(Math.max(promoDiscount, 0), lineGross);
+        const afterPromo = lineGross - promoDiscount;
+
+        // The cashier's own discretionary discount — this IS user input, so it's
+        // clamped to what's left after the promo rather than trusted verbatim.
+        const bargainType = item.discountType;
+        const bargainValue = Number(item.discountValue) || 0;
+        let bargainDiscount = 0;
+        if (bargainType && bargainValue) {
+          bargainDiscount = bargainType === 'percent'
+            ? afterPromo * (bargainValue / 100)
+            : bargainValue;
+        }
+        bargainDiscount = Math.min(Math.max(bargainDiscount, 0), afterPromo);
+
+        const itemDiscount = promoDiscount + bargainDiscount;
+        const lineTotal = lineGross - itemDiscount;
+
+        pricedItems.push({
+          variantId: item.variantId,
+          quantity: item.quantity,
+          unitPrice,
+          discountAmount: itemDiscount,
+          lineTotal,
+          costPrice: variant.cost_price || 0,
+        });
+        subtotal += lineGross;
+        discountAmount += itemDiscount;
+      }
+
+      const safeTaxAmount = Math.max(Number(taxAmount) || 0, 0);
+      const total = subtotal - discountAmount + safeTaxAmount;
+
+      const paymentsTotal = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      if (Math.abs(paymentsTotal - total) > 0.01) {
+        throw new Error(
+          `Payment total (${paymentsTotal.toFixed(2)}) does not match sale total (${total.toFixed(2)}).`
+        );
+      }
+
+      let sale;
+      try {
+        ({ rows: [sale] } = await client.query(
+          `INSERT INTO sales
+             (shift_id, user_id, customer_id, subtotal, discount_amount,
+              tax_amount, total, notes, status, idempotency_key)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'completed',$9)
+           RETURNING *`,
+          [shiftId, userId, customerId, subtotal, discountAmount, safeTaxAmount, total, notes, idempotencyKey]
+        ));
+      } catch (err) {
+        // Concurrent duplicate submission with the same key raced us — the other
+        // request already inserted it. Return that row instead of failing.
+        if (err.code === '23505' && err.constraint === 'sales_idempotency_key_unique') {
+          await client.query('ROLLBACK');
+          const { rows: [race] } = await query(
+            'SELECT * FROM sales WHERE idempotency_key = $1',
+            [idempotencyKey]
+          );
+          return race;
+        }
+        throw err;
+      }
+
+      for (const item of pricedItems) {
         await client.query(
           `INSERT INTO sale_items
             (sale_id, variant_id, quantity, unit_price, discount_amount, line_total, cost_price)
           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
           [sale.id, item.variantId, item.quantity, item.unitPrice,
-          item.discountAmount || 0, item.lineTotal, costPrice]
+          item.discountAmount, item.lineTotal, item.costPrice]
         );
 
         const { rows: [stock] } = await client.query(
@@ -78,6 +167,13 @@ const SaleModel = {
            WHERE id = $3`,
           [total, pointsEarned, customerId]
         );
+      }
+
+      if (offlineRetry) {
+        await SyncQueueModel.logSynced(client, {
+          actionType: 'sale',
+          payload: { saleId: sale.id, idempotencyKey },
+        });
       }
 
       await client.query('COMMIT');

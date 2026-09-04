@@ -18,6 +18,13 @@ router.get('/receipt/:seq', anyStaff, SaleController.getByReceiptSeq);
 router.get('/:id', anyStaff, SaleController.getById);
 
 router.post('/', anyStaff, [
+  body('idempotencyKey')
+    .isUUID()
+    .withMessage('Invalid idempotency key.'),
+  body('offlineRetry')
+    .optional()
+    .isBoolean()
+    .withMessage('offlineRetry must be a boolean.'),
   body('items')
     .isArray({ min: 1 })
     .withMessage('Cart must have at least one item.'),
@@ -27,6 +34,14 @@ router.post('/', anyStaff, [
   body('items.*.quantity')
     .isInt({ min: 1 })
     .withMessage('Quantity must be at least 1.'),
+  body('items.*.discountType')
+    .optional({ nullable: true })
+    .isIn(['percent', 'fixed'])
+    .withMessage('Invalid discount type.'),
+  body('items.*.discountValue')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Discount value must be a positive number.'),
   body('payments')
     .isArray({ min: 1 })
     .withMessage('At least one payment is required.'),
