@@ -1,6 +1,7 @@
 import { AppError } from '../utils/appError.js';
 import { query, getClient } from '../config/db.js';
 import SyncQueueModel from './syncQueue.model.js';
+import { processReturn } from './return.model.js';
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -11,6 +12,7 @@ const SaleModel = {
       shiftId, userId, customerId, taxAmount, notes, items, payments, idempotencyKey, offlineRetry,
       billDiscountType, billDiscountValue, discountReason,
       discountLimit, approval,
+      exchange, userRole, refundApproval,
     } = saleData;
 
     // Replay protection: if this exact checkout attempt already went through
@@ -142,10 +144,44 @@ const SaleModel = {
       const safeTaxAmount = Math.max(Number(taxAmount) || 0, 0);
       const total = subtotal - discountAmount + safeTaxAmount;
 
+      // Exchange: the returned items' credit (what the customer originally
+      // paid for them) goes toward this sale. Whatever's left over is paid
+      // back to the customer; whatever's short, they pay.
+      let exchangeReturn = null;
+      let creditApplied = 0;
+      let refundOut = 0;
+      if (exchange) {
+        exchangeReturn = await processReturn(client, {
+          originalSaleId: exchange.originalSaleId,
+          userId,
+          shiftId,
+          refundMethod: 'exchange', // finalised below once the amounts are known
+          reason: exchange.reason,
+          items: exchange.items,
+        });
+        const credit = Number(exchangeReturn.refund_amount);
+        creditApplied = round2(Math.min(credit, total));
+        refundOut = round2(credit - creditApplied);
+
+        if (refundOut > 0) {
+          if (!['cash', 'card'].includes(exchange.refundMethod)) {
+            throw new AppError('Choose how to refund the difference (cash or card).');
+          }
+          if (exchange.refundMethod === 'cash' && userRole === 'cashier'
+              && !(refundApproval && refundApproval.maxAmount + 0.01 >= refundOut)) {
+            throw new AppError(
+              `Cash refund of Rs. ${refundOut.toLocaleString()} needs manager approval.`,
+              403, 'REFUND_APPROVAL_REQUIRED'
+            );
+          }
+        }
+      }
+
+      const amountDue = round2(total - creditApplied);
       const paymentsTotal = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      if (Math.abs(paymentsTotal - total) > 0.01) {
+      if (Math.abs(paymentsTotal - amountDue) > 0.01) {
         throw new AppError(
-          `Payment total (${paymentsTotal.toFixed(2)}) does not match sale total (${total.toFixed(2)}).`
+          `Payment total (${paymentsTotal.toFixed(2)}) does not match amount due (${amountDue.toFixed(2)}).`
         );
       }
 
@@ -223,10 +259,29 @@ const SaleModel = {
       }
 
       for (const payment of payments) {
+        if (!(Number(payment.amount) > 0)) continue;
         await client.query(
           `INSERT INTO payments (sale_id, method, amount, reference)
            VALUES ($1,$2,$3,$4)`,
           [sale.id, payment.method, payment.amount, payment.reference || null]
+        );
+      }
+
+      if (exchangeReturn) {
+        if (creditApplied > 0) {
+          await client.query(
+            `INSERT INTO payments (sale_id, method, amount, reference)
+             VALUES ($1,'exchange_credit',$2,$3)`,
+            [sale.id, creditApplied, `Return ${exchangeReturn.id.slice(0, 8)}`]
+          );
+        }
+        await client.query(
+          `UPDATE returns
+           SET exchange_sale_id = $1, exchange_amount = $2, refund_method = $3, approved_by = $4
+           WHERE id = $5`,
+          [sale.id, creditApplied, refundOut > 0 ? exchange.refundMethod : 'exchange',
+           refundOut > 0 && exchange.refundMethod === 'cash' ? (refundApproval?.approverId || null) : null,
+           exchangeReturn.id]
         );
       }
 
@@ -286,7 +341,30 @@ const SaleModel = {
       [id]
     );
 
-    return { ...sale, items, payments };
+    // If this sale was an exchange: what came back, from which bill, and any
+    // difference refunded — printed on the receipt.
+    const { rows: [exchange] } = await query(
+      `SELECT r.id, r.refund_amount, r.exchange_amount, r.refund_method,
+              s.receipt_seq AS original_receipt_seq
+       FROM returns r
+       JOIN sales s ON r.original_sale_id = s.id
+       WHERE r.exchange_sale_id = $1`,
+      [id]
+    );
+    if (exchange) {
+      const { rows: returnedItems } = await query(
+        `SELECT ri.quantity, ri.refund_amount, pv.size, pv.color, p.name AS product_name
+         FROM return_items ri
+         JOIN sale_items si ON ri.sale_item_id = si.id
+         JOIN product_variants pv ON si.variant_id = pv.id
+         JOIN products p ON pv.product_id = p.id
+         WHERE ri.return_id = $1`,
+        [exchange.id]
+      );
+      exchange.items = returnedItems;
+    }
+
+    return { ...sale, items, payments, exchange: exchange || null };
   },
 
   findByReceiptSeq: async (seq) => {
@@ -308,7 +386,12 @@ const SaleModel = {
                 SELECT SUM(ri.quantity)::int
                 FROM return_items ri
                 WHERE ri.sale_item_id = si.id
-              ), 0) AS already_returned
+              ), 0) AS already_returned,
+              COALESCE((
+                SELECT SUM(ri.refund_amount)
+                FROM return_items ri
+                WHERE ri.sale_item_id = si.id
+              ), 0) AS already_refunded
        FROM sale_items si
        JOIN product_variants pv ON si.variant_id = pv.id
        JOIN products p ON pv.product_id = p.id

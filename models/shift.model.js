@@ -35,6 +35,15 @@ const ShiftModel = {
       [shiftId]
     );
 
+    // Cash paid back to customers during this shift (plain returns, and the
+    // part of an exchange not used up by the new items).
+    const { rows: [refundRow] } = await query(
+      `SELECT COALESCE(SUM(refund_amount - COALESCE(exchange_amount, 0)), 0) AS cash_refunds
+       FROM returns
+       WHERE shift_id = $1 AND refund_method = 'cash'`,
+      [shiftId]
+    );
+
     const { rows } = await query(
       `UPDATE shifts
        SET closing_cash = $1, closed_at = NOW(),
@@ -45,7 +54,7 @@ const ShiftModel = {
     );
 
     if (!rows[0]) return null;
-    return { ...rows[0], cash_sales: cashRow.cash_sales };
+    return { ...rows[0], cash_sales: cashRow.cash_sales, cash_refunds: refundRow.cash_refunds };
   },
 
   // Get a shift by id with its sales summary

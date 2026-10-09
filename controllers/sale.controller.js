@@ -1,9 +1,7 @@
 import SaleModel from '../models/sale.model.js';
-import bcrypt from 'bcryptjs';
 import ShiftModel from '../models/shift.model.js';
 import SettingsModel from '../models/settings.model.js';
-import { query } from '../config/db.js';
-import { signApproval, verifyApproval } from '../utils/discountApproval.js';
+import { signApproval, verifyApproval, checkApproverPin } from '../utils/approval.js';
 
 const SaleController = {
 
@@ -24,7 +22,7 @@ const SaleController = {
       // An approval only counts for the cashier and checkout it was issued for.
       let approval = null;
       if (req.body.approvalToken) {
-        const decoded = verifyApproval(req.body.approvalToken);
+        const decoded = verifyApproval('discount', req.body.approvalToken);
         if (decoded
             && decoded.cashierId === req.user.id
             && decoded.idempotencyKey === req.body.idempotencyKey) {
@@ -32,12 +30,26 @@ const SaleController = {
         }
       }
 
+      // Exchange where the shop pays money back: a cashier's cash refund needs
+      // a manager's approval for that original bill.
+      let refundApproval = null;
+      if (req.body.exchange?.refundApprovalToken) {
+        const decoded = verifyApproval('refund', req.body.exchange.refundApprovalToken);
+        if (decoded
+            && decoded.cashierId === req.user.id
+            && decoded.originalSaleId === req.body.exchange.originalSaleId) {
+          refundApproval = decoded;
+        }
+      }
+
       const sale = await SaleModel.create({
         ...req.body,
         userId: req.user.id,
+        userRole: req.user.role,
         shiftId: shift.id,
         discountLimit,
         approval,
+        refundApproval,
       });
       res.status(201).json({
         success: true,
@@ -52,13 +64,8 @@ const SaleController = {
   approveDiscount: async (req, res, next) => {
     try {
       const { approverId, pin, idempotencyKey, percent } = req.body;
-      const { rows: [approver] } = await query(
-        `SELECT id, name, role, is_active, approval_pin_hash FROM users WHERE id = $1`,
-        [approverId]
-      );
-      const pinOk = !!approver?.approval_pin_hash
-        && await bcrypt.compare(String(pin), approver.approval_pin_hash);
-      if (!pinOk || !approver.is_active || !['manager', 'admin'].includes(approver.role)) {
+      const approver = await checkApproverPin(approverId, pin);
+      if (!approver) {
         return res.status(403).json({ success: false, message: 'Wrong PIN.' });
       }
 
@@ -71,7 +78,7 @@ const SaleController = {
         });
       }
 
-      const token = signApproval({
+      const token = signApproval('discount', {
         approverId: approver.id,
         cashierId: req.user.id,
         idempotencyKey,

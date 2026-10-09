@@ -66,9 +66,31 @@ router.post('/', anyStaff, [
   body('approvalToken')
     .optional({ nullable: true })
     .isString(),
-  body('payments')
+  body('exchange')
+    .optional({ nullable: true })
+    .isObject(),
+  body('exchange.originalSaleId')
+    .if(body('exchange').exists({ values: 'null' }))
+    .isUUID()
+    .withMessage('Invalid original sale.'),
+  body('exchange.items')
+    .if(body('exchange').exists({ values: 'null' }))
     .isArray({ min: 1 })
-    .withMessage('At least one payment is required.'),
+    .withMessage('Pick at least one item to return.'),
+  body('exchange.items.*.saleItemId')
+    .isUUID()
+    .withMessage('Invalid returned item.'),
+  body('exchange.items.*.quantity')
+    .isInt({ min: 1 })
+    .withMessage('Return quantity must be at least 1.'),
+  body('exchange.refundMethod')
+    .optional({ nullable: true })
+    .isIn(['cash', 'card'])
+    .withMessage('Refund must be cash or card.'),
+  // Empty when returned items fully cover the new ones (checked in the model).
+  body('payments')
+    .isArray()
+    .withMessage('Payments must be a list.'),
   body('total')
     .isFloat({ min: 0 })
     .withMessage('Total must be a positive number.'),
