@@ -19,7 +19,9 @@ const UserModel = {
 
   findAll: async () => {
     const { rows } = await query(
-      'SELECT id, name, username, role, is_active, created_at, last_login FROM users ORDER BY name ASC'
+      `SELECT id, name, username, role, is_active, created_at, last_login,
+              (approval_pin_hash IS NOT NULL) AS has_pin
+       FROM users ORDER BY name ASC`
     );
     return rows;
   },
@@ -65,6 +67,10 @@ const UserModel = {
       [isActive, id]
     );
     return rows[0] || null;
+  },
+
+  setApprovalPin: async (id, pinHash) => {
+    await query('UPDATE users SET approval_pin_hash = $1 WHERE id = $2', [pinHash, id]);
   },
 
   updateLastLogin: async (id) => {

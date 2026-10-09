@@ -58,6 +58,21 @@ const StaffController = {
     } catch (err) { next(err); }
   },
 
+  setPin: async (req, res, next) => {
+    try {
+      const user = await UserModel.findById(req.params.id);
+      if (!user) {
+        return res.status(404).json({ success: false, message: 'Staff member not found.' });
+      }
+      if (!['manager', 'admin'].includes(user.role)) {
+        return res.status(400).json({ success: false, message: 'Only managers and admins can have an approval PIN.' });
+      }
+      const pinHash = req.body.pin ? await bcrypt.hash(String(req.body.pin), 10) : null;
+      await UserModel.setApprovalPin(user.id, pinHash);
+      res.json({ success: true, message: pinHash ? 'Approval PIN set.' : 'Approval PIN removed.' });
+    } catch (err) { next(err); }
+  },
+
   setActive: async (req, res, next) => {
     try {
       const { isActive } = req.body;

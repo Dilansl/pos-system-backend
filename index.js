@@ -13,6 +13,7 @@ import customerRouter from './routers/customer.router.js';
 import returnRouter from './routers/return.router.js';
 import reportRouter from './routers/report.router.js';
 import shiftRouter from './routers/shift.router.js';
+import settingsRouter from './routers/settings.router.js';
 // Error handler
 import { errorHandler } from './middleware/error.middleware.js';
 
@@ -60,6 +61,7 @@ app.use('/api/customers', customerRouter);
 app.use('/api/returns',   returnRouter);
 app.use('/api/reports',   reportRouter);
 app.use('/api/shifts',    shiftRouter);
+app.use('/api/settings',  settingsRouter);
 
 // 404
 app.use((req, res) => {

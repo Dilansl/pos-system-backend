@@ -1,5 +1,9 @@
 import SaleModel from '../models/sale.model.js';
+import bcrypt from 'bcryptjs';
 import ShiftModel from '../models/shift.model.js';
+import SettingsModel from '../models/settings.model.js';
+import { query } from '../config/db.js';
+import { signApproval, verifyApproval } from '../utils/discountApproval.js';
 
 const SaleController = {
 
@@ -14,16 +18,66 @@ const SaleController = {
         });
       }
 
+      const limits = await SettingsModel.getDiscountLimits();
+      const discountLimit = Number(limits[req.user.role] ?? 0);
+
+      // An approval only counts for the cashier and checkout it was issued for.
+      let approval = null;
+      if (req.body.approvalToken) {
+        const decoded = verifyApproval(req.body.approvalToken);
+        if (decoded
+            && decoded.cashierId === req.user.id
+            && decoded.idempotencyKey === req.body.idempotencyKey) {
+          approval = decoded;
+        }
+      }
+
       const sale = await SaleModel.create({
         ...req.body,
         userId: req.user.id,
         shiftId: shift.id,
+        discountLimit,
+        approval,
       });
       res.status(201).json({
         success: true,
         data: sale,
         message: 'Sale completed.',
       });
+    } catch (err) { next(err); }
+  },
+
+  // Manager/admin enters their PIN at the till to approve an over-limit
+  // discount. Returns a token the checkout then carries.
+  approveDiscount: async (req, res, next) => {
+    try {
+      const { approverId, pin, idempotencyKey, percent } = req.body;
+      const { rows: [approver] } = await query(
+        `SELECT id, name, role, is_active, approval_pin_hash FROM users WHERE id = $1`,
+        [approverId]
+      );
+      const pinOk = !!approver?.approval_pin_hash
+        && await bcrypt.compare(String(pin), approver.approval_pin_hash);
+      if (!pinOk || !approver.is_active || !['manager', 'admin'].includes(approver.role)) {
+        return res.status(403).json({ success: false, message: 'Wrong PIN.' });
+      }
+
+      const limits = await SettingsModel.getDiscountLimits();
+      const approverLimit = Number(limits[approver.role] ?? 0);
+      if (Number(percent) > approverLimit + 0.01) {
+        return res.status(403).json({
+          success: false,
+          message: `${approver.name} can approve up to ${approverLimit}% only.`,
+        });
+      }
+
+      const token = signApproval({
+        approverId: approver.id,
+        cashierId: req.user.id,
+        idempotencyKey,
+        maxPercent: Number(percent),
+      });
+      res.json({ success: true, data: { token, approverName: approver.name } });
     } catch (err) { next(err); }
   },
 

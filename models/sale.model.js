@@ -2,10 +2,16 @@ import { AppError } from '../utils/appError.js';
 import { query, getClient } from '../config/db.js';
 import SyncQueueModel from './syncQueue.model.js';
 
+const round2 = (n) => Math.round(n * 100) / 100;
+
 const SaleModel = {
 
   create: async (saleData) => {
-    const { shiftId, userId, customerId, taxAmount, notes, items, payments, idempotencyKey, offlineRetry } = saleData;
+    const {
+      shiftId, userId, customerId, taxAmount, notes, items, payments, idempotencyKey, offlineRetry,
+      billDiscountType, billDiscountValue, discountReason,
+      discountLimit, approval,
+    } = saleData;
 
     // Replay protection: if this exact checkout attempt already went through
     // (e.g. the client retried after a network timeout), return the sale that
@@ -67,19 +73,70 @@ const SaleModel = {
         }
         bargainDiscount = Math.min(Math.max(bargainDiscount, 0), afterPromo);
 
-        const itemDiscount = promoDiscount + bargainDiscount;
-        const lineTotal = lineGross - itemDiscount;
-
         pricedItems.push({
           variantId: item.variantId,
           quantity: item.quantity,
           unitPrice,
-          discountAmount: itemDiscount,
-          lineTotal,
+          lineGross,
+          promoDiscount,
+          afterPromo,
+          bargainDiscount,
           costPrice: variant.cost_price || 0,
         });
         subtotal += lineGross;
-        discountAmount += itemDiscount;
+      }
+
+      // Bill-level discount (cashier input) — on what's left after line
+      // discounts, then spread across lines in proportion to their net so
+      // per-item revenue/profit and later returns stay accurate.
+      const netBeforeBill = pricedItems.reduce((s, i) => s + i.afterPromo - i.bargainDiscount, 0);
+      const billValue = Number(billDiscountValue) || 0;
+      let billDiscount = 0;
+      if (billDiscountType && billValue > 0) {
+        billDiscount = billDiscountType === 'percent'
+          ? netBeforeBill * (billValue / 100)
+          : billValue;
+      }
+      billDiscount = round2(Math.min(Math.max(billDiscount, 0), netBeforeBill));
+
+      let billLeft = billDiscount;
+      pricedItems.forEach((item, idx) => {
+        const net = item.afterPromo - item.bargainDiscount;
+        const share = idx === pricedItems.length - 1
+          ? billLeft
+          : (netBeforeBill > 0 ? round2(billDiscount * (net / netBeforeBill)) : 0);
+        item.billShare = Math.min(share, net);
+        billLeft = round2(billLeft - item.billShare);
+
+        // The cashier's own discount on this line (bargain + bill share) as a
+        // % of the price after promo — this is what the role limit caps.
+        item.cashierDiscount = item.bargainDiscount + item.billShare;
+        item.cashierPercent = item.afterPromo > 0
+          ? (item.cashierDiscount / item.afterPromo) * 100
+          : 0;
+        item.discountAmount = item.promoDiscount + item.cashierDiscount;
+        item.lineTotal = item.lineGross - item.discountAmount;
+        discountAmount += item.discountAmount;
+      });
+
+      // Enforce the cashier's discount limit; above it, a manager approval
+      // (verified token bound to this checkout) must cover the largest line.
+      const maxPercent = Math.max(0, ...pricedItems.map((i) => i.cashierPercent));
+      let approvedBy = null;
+      if (maxPercent > discountLimit + 0.01) {
+        if (!approval) {
+          throw new AppError(
+            `Discount of ${maxPercent.toFixed(1)}% is over your ${discountLimit}% limit. Manager approval needed.`,
+            403, 'DISCOUNT_APPROVAL_REQUIRED'
+          );
+        }
+        if (approval.maxPercent + 0.01 < maxPercent) {
+          throw new AppError(
+            `Approval covers up to ${approval.maxPercent}%, but this sale has ${maxPercent.toFixed(1)}%. Ask again.`,
+            403, 'DISCOUNT_APPROVAL_REQUIRED'
+          );
+        }
+        approvedBy = approval.approverId;
       }
 
       const safeTaxAmount = Math.max(Number(taxAmount) || 0, 0);
@@ -97,10 +154,12 @@ const SaleModel = {
         ({ rows: [sale] } = await client.query(
           `INSERT INTO sales
              (shift_id, user_id, customer_id, subtotal, discount_amount,
-              tax_amount, total, notes, status, idempotency_key)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'completed',$9)
+              tax_amount, total, notes, status, idempotency_key,
+              bill_discount_amount, discount_reason, discount_approved_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'completed',$9,$10,$11,$12)
            RETURNING *`,
-          [shiftId, userId, customerId, subtotal, discountAmount, safeTaxAmount, total, notes, idempotencyKey]
+          [shiftId, userId, customerId, subtotal, discountAmount, safeTaxAmount, total, notes, idempotencyKey,
+           billDiscount, discountReason?.trim() || null, approvedBy]
         ));
       } catch (err) {
         // Concurrent duplicate submission with the same key raced us — the other
@@ -148,6 +207,18 @@ const SaleModel = {
            VALUES ($1,$2,'sale',$3,$4,$5,$6)`,
           [item.variantId, userId, stock.quantity, -item.quantity, newQty,
            `Sale #${sale.id.slice(0, 8)}`]
+        );
+      }
+
+      // Audit trail: one row per line the cashier discounted.
+      for (const item of pricedItems) {
+        if (item.cashierDiscount <= 0) continue;
+        await client.query(
+          `INSERT INTO discount_logs
+             (sale_id, variant_id, user_id, approved_by, discount_amount, discount_percent, reason)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [sale.id, item.variantId, userId, approvedBy, round2(item.cashierDiscount),
+           round2(item.cashierPercent), discountReason?.trim() || null]
         );
       }
 

@@ -56,4 +56,13 @@ router.patch('/:id/status', adminOnly, [
   validate,
 ], StaffController.setActive);
 
+// Approval PIN for managers/admins (null clears it).
+router.patch('/:id/pin', adminOnly, [
+  body('pin')
+    .optional({ nullable: true })
+    .matches(/^\d{4,6}$/)
+    .withMessage('PIN must be 4 to 6 digits.'),
+  validate,
+], StaffController.setPin);
+
 export default router;

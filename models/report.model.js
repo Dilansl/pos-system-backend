@@ -90,6 +90,28 @@ const ReportModel = {
     return rows;
   },
 
+  // Every cashier-given discount (bargain + bill share) — who gave it, who
+  // approved it, and why.
+  getDiscountLog: async ({ startDate, endDate }) => {
+    const { rows } = await query(
+      `SELECT d.id, d.created_at, d.discount_amount, d.discount_percent, d.reason,
+              s.receipt_seq, s.id AS sale_id,
+              u.name AS cashier_name, a.name AS approved_by_name,
+              p.name AS product_name, pv.size, pv.color
+       FROM discount_logs d
+       JOIN sales s ON d.sale_id = s.id
+       JOIN users u ON d.user_id = u.id
+       LEFT JOIN users a ON d.approved_by = a.id
+       LEFT JOIN product_variants pv ON d.variant_id = pv.id
+       LEFT JOIN products p ON pv.product_id = p.id
+       WHERE d.created_at BETWEEN $1 AND $2
+       ORDER BY d.created_at DESC
+       LIMIT 500`,
+      [startDate, endDate]
+    );
+    return rows;
+  },
+
   getPaymentBreakdown: async ({ startDate, endDate }) => {
     const { rows } = await query(
       `SELECT p.method,
