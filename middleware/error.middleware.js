@@ -26,11 +26,12 @@ export const errorHandler = (err, req, res, next) => {
     });
   }
 
-  // Default 500 error
+  // Default 500 error — raw details (SQL errors etc.) only in explicit
+  // development mode, so an unset NODE_ENV never leaks them to the till.
   return res.status(500).json({
     success: false,
-    message: process.env.NODE_ENV === 'production'
-      ? 'An unexpected error occurred.'
-      : err.message,
+    message: process.env.NODE_ENV === 'development'
+      ? err.message
+      : 'Something went wrong. Please try again or contact the admin.',
   });
 };
