@@ -2,6 +2,15 @@ export const errorHandler = (err, req, res, next) => {
   console.error(`[${new Date().toISOString()}] ERROR on ${req.method} ${req.path}:`);
   console.error(err);
 
+  // Expected business-rule failure (AppError) — message is meant for the user.
+  if (err.status && err.status < 500) {
+    return res.status(err.status).json({
+      success: false,
+      message: err.message,
+      ...(typeof err.code === 'string' && !/^\d/.test(err.code) ? { code: err.code } : {}),
+    });
+  }
+
   // PostgreSQL unique violation (duplicate username/barcode)
   if (err.code === '23505') {
     return res.status(409).json({

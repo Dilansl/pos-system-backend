@@ -1,3 +1,4 @@
+import { AppError } from '../utils/appError.js';
 import { query, getClient } from '../config/db.js';
 
 const ReturnModel = {
@@ -24,7 +25,7 @@ const ReturnModel = {
           'SELECT variant_id, quantity, unit_price FROM sale_items WHERE id = $1',
           [item.saleItemId]
         );
-        if (!saleItem) throw new Error('Sale item not found.');
+        if (!saleItem) throw new AppError('Sale item not found.');
 
         // How many were already returned in previous returns?
         const { rows: [{ already_returned }] } = await client.query(
@@ -35,7 +36,7 @@ const ReturnModel = {
 
         const remaining = saleItem.quantity - already_returned;
         if (item.quantity > remaining) {
-          throw new Error(
+          throw new AppError(
             `Cannot return ${item.quantity} — only ${remaining} left to return for this item.`
           );
         }
@@ -57,7 +58,7 @@ const ReturnModel = {
           'SELECT * FROM stock WHERE variant_id = $1 FOR UPDATE',
           [saleItem.variant_id]
         );
-        if (!stock) throw new Error(`No stock record for variant ${saleItem.variant_id}`);
+        if (!stock) throw new AppError(`No stock record for variant ${saleItem.variant_id}`);
 
         const newQty = stock.quantity + item.quantity;
 

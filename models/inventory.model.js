@@ -1,3 +1,4 @@
+import { AppError } from '../utils/appError.js';
 import { query, getClient } from '../config/db.js';
 
 const InventoryModel = {
@@ -74,10 +75,10 @@ const InventoryModel = {
         [variantId]
       );
 
-      if (!stock) throw new Error(`No stock record for variant ${variantId}`);
+      if (!stock) throw new AppError(`No stock record for variant ${variantId}`);
 
       const newQty = stock.quantity + quantityChange;
-      if (newQty < 0) throw new Error('Stock cannot go below 0.');
+      if (newQty < 0) throw new AppError('Stock cannot go below 0.');
 
       await client.query(
         `UPDATE stock SET quantity = $1, updated_at = NOW() WHERE variant_id = $2`,

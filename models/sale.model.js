@@ -1,3 +1,4 @@
+import { AppError } from '../utils/appError.js';
 import { query, getClient } from '../config/db.js';
 import SyncQueueModel from './syncQueue.model.js';
 
@@ -34,7 +35,7 @@ const SaleModel = {
            WHERE pv.id = $1`,
           [item.variantId]
         );
-        if (!variant) throw new Error(`Variant ${item.variantId} not found.`);
+        if (!variant) throw new AppError(`Variant ${item.variantId} not found.`);
 
         const unitPrice = Number(variant.price_override ?? variant.base_price);
         const lineGross = unitPrice * item.quantity;
@@ -86,7 +87,7 @@ const SaleModel = {
 
       const paymentsTotal = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
       if (Math.abs(paymentsTotal - total) > 0.01) {
-        throw new Error(
+        throw new AppError(
           `Payment total (${paymentsTotal.toFixed(2)}) does not match sale total (${total.toFixed(2)}).`
         );
       }
@@ -129,9 +130,9 @@ const SaleModel = {
           [item.variantId]
         );
 
-        if (!stock) throw new Error(`No stock record for variant ${item.variantId}`);
+        if (!stock) throw new AppError(`No stock record for variant ${item.variantId}`);
         if (stock.quantity < item.quantity) {
-          throw new Error(`Insufficient stock. Available: ${stock.quantity}`);
+          throw new AppError(`Insufficient stock. Available: ${stock.quantity}`);
         }
 
         const newQty = stock.quantity - item.quantity;
