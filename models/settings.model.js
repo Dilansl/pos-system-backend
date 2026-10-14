@@ -1,6 +1,7 @@
 import { query } from '../config/db.js';
 
 const DEFAULT_DISCOUNT_LIMITS = { cashier: 10, manager: 30, admin: 100 };
+const DEFAULT_CASH_OUT_LIMIT = 1000;
 
 const SettingsModel = {
   // Max cashier-given discount (bargain + bill share) per line, as a % of the
@@ -21,6 +22,26 @@ const SettingsModel = {
       [JSON.stringify(limits)]
     );
     return row.value;
+  },
+
+  // Most a cashier can take out of the drawer (petty cash) without a
+  // manager PIN, in rupees.
+  getCashOutLimit: async () => {
+    const { rows: [row] } = await query(
+      `SELECT value FROM settings WHERE key = 'cash_out_limit'`
+    );
+    return Number(row?.value?.cashier ?? DEFAULT_CASH_OUT_LIMIT);
+  },
+
+  setCashOutLimit: async (amount) => {
+    const { rows: [row] } = await query(
+      `INSERT INTO settings (key, value, updated_at)
+       VALUES ('cash_out_limit', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+       RETURNING value`,
+      [JSON.stringify({ cashier: amount })]
+    );
+    return Number(row.value.cashier);
   },
 
   // Managers/admins who have set an approval PIN — shown to the cashier in

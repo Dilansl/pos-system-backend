@@ -18,4 +18,13 @@ router.put('/discount-limits', adminOnly, [
   validate,
 ], SettingsController.setDiscountLimits);
 
+router.get('/cash', anyStaff, SettingsController.getCash);
+
+router.put('/cash-out-limit', adminOnly, [
+  body('amount')
+    .isFloat({ min: 0 })
+    .withMessage('Limit must be zero or more.'),
+  validate,
+], SettingsController.setCashOutLimit);
+
 export default router;

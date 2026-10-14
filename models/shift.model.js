@@ -44,6 +44,8 @@ const ShiftModel = {
       [shiftId]
     );
 
+    const cash = await ShiftModel.getCashTotals(shiftId);
+
     const { rows } = await query(
       `UPDATE shifts
        SET closing_cash = $1, closed_at = NOW(),
@@ -54,7 +56,40 @@ const ShiftModel = {
     );
 
     if (!rows[0]) return null;
-    return { ...rows[0], cash_sales: cashRow.cash_sales, cash_refunds: refundRow.cash_refunds };
+    return { ...rows[0], cash_sales: cashRow.cash_sales, cash_refunds: refundRow.cash_refunds, ...cash };
+  },
+
+  // Petty cash put into / taken out of the drawer during a shift.
+  addCashMovement: async ({ shiftId, userId, type, amount, reason, approvedBy }) => {
+    const { rows } = await query(
+      `INSERT INTO cash_movements (shift_id, user_id, type, amount, reason, approved_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [shiftId, userId, type, amount, reason, approvedBy || null]
+    );
+    return rows[0];
+  },
+
+  getCashMovements: async (shiftId) => {
+    const { rows } = await query(
+      `SELECT cm.*, a.name AS approved_by_name
+       FROM cash_movements cm
+       LEFT JOIN users a ON cm.approved_by = a.id
+       WHERE cm.shift_id = $1
+       ORDER BY cm.created_at ASC`,
+      [shiftId]
+    );
+    return rows;
+  },
+
+  getCashTotals: async (shiftId) => {
+    const { rows: [row] } = await query(
+      `SELECT COALESCE(SUM(amount) FILTER (WHERE type = 'in'), 0)  AS cash_in,
+              COALESCE(SUM(amount) FILTER (WHERE type = 'out'), 0) AS cash_out
+       FROM cash_movements
+       WHERE shift_id = $1`,
+      [shiftId]
+    );
+    return row;
   },
 
   // Get a shift by id with its sales summary

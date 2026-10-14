@@ -14,6 +14,24 @@ const SettingsController = {
     } catch (err) { next(err); }
   },
 
+  // Cash-out limit + who can approve — for the Cash In/Out dialog.
+  getCash: async (req, res, next) => {
+    try {
+      const [cashOutLimit, approvers] = await Promise.all([
+        SettingsModel.getCashOutLimit(),
+        SettingsModel.getApprovers(),
+      ]);
+      res.json({ success: true, data: { cashOutLimit, approvers } });
+    } catch (err) { next(err); }
+  },
+
+  setCashOutLimit: async (req, res, next) => {
+    try {
+      const cashOutLimit = await SettingsModel.setCashOutLimit(Number(req.body.amount));
+      res.json({ success: true, data: cashOutLimit, message: 'Cash-out limit saved.' });
+    } catch (err) { next(err); }
+  },
+
   setDiscountLimits: async (req, res, next) => {
     try {
       const { cashier, manager, admin } = req.body;
