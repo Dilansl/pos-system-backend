@@ -27,4 +27,17 @@ router.put('/cash-out-limit', adminOnly, [
   validate,
 ], SettingsController.setCashOutLimit);
 
+router.get('/shop', anyStaff, SettingsController.getShop);
+
+router.put('/shop', adminOnly, [
+  body('name').isString().trim().isLength({ min: 1, max: 60 }).withMessage('Enter the shop name (up to 60 characters).'),
+  body(['tagline', 'phone', 'tin'])
+    .optional({ values: 'null' }).isString().trim().isLength({ max: 60 })
+    .withMessage('Keep it under 60 characters.'),
+  body(['address', 'receiptFooter'])
+    .optional({ values: 'null' }).isString().trim().isLength({ max: 120 })
+    .withMessage('Keep it under 120 characters.'),
+  validate,
+], SettingsController.setShop);
+
 export default router;

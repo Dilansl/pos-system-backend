@@ -32,6 +32,27 @@ const SettingsController = {
     } catch (err) { next(err); }
   },
 
+  getShop: async (req, res, next) => {
+    try {
+      res.json({ success: true, data: await SettingsModel.getShop() });
+    } catch (err) { next(err); }
+  },
+
+  setShop: async (req, res, next) => {
+    try {
+      const pick = (k) => String(req.body[k] ?? '').trim();
+      const shop = await SettingsModel.setShop({
+        name: pick('name'),
+        tagline: pick('tagline'),
+        address: pick('address'),
+        phone: pick('phone'),
+        tin: pick('tin'),
+        receiptFooter: pick('receiptFooter'),
+      });
+      res.json({ success: true, data: shop, message: 'Shop details saved.' });
+    } catch (err) { next(err); }
+  },
+
   setDiscountLimits: async (req, res, next) => {
     try {
       const { cashier, manager, admin } = req.body;

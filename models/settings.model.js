@@ -2,6 +2,15 @@ import { query } from '../config/db.js';
 
 const DEFAULT_DISCOUNT_LIMITS = { cashier: 10, manager: 30, admin: 100 };
 const DEFAULT_CASH_OUT_LIMIT = 1000;
+// Printed on receipts and barcode labels; admin edits them in Staff.
+const DEFAULT_SHOP = {
+  name: 'ROPYCO Fashion',
+  tagline: 'Clothing Shop',
+  address: 'Nittambuwwa, Sri Lanka',
+  phone: '0706201176',
+  tin: '',
+  receiptFooter: 'Thank you for shopping!',
+};
 
 const SettingsModel = {
   // Max cashier-given discount (bargain + bill share) per line, as a % of the
@@ -42,6 +51,24 @@ const SettingsModel = {
       [JSON.stringify({ cashier: amount })]
     );
     return Number(row.value.cashier);
+  },
+
+  getShop: async () => {
+    const { rows: [row] } = await query(
+      `SELECT value FROM settings WHERE key = 'shop'`
+    );
+    return { ...DEFAULT_SHOP, ...(row?.value || {}) };
+  },
+
+  setShop: async (shop) => {
+    const { rows: [row] } = await query(
+      `INSERT INTO settings (key, value, updated_at)
+       VALUES ('shop', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+       RETURNING value`,
+      [JSON.stringify(shop)]
+    );
+    return { ...DEFAULT_SHOP, ...row.value };
   },
 
   // Managers/admins who have set an approval PIN — shown to the cashier in
