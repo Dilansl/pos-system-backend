@@ -10,20 +10,27 @@ const ReportModel = {
          COALESCE(SUM(discount_amount), 0)      AS total_discounts,
          COALESCE(SUM(tax_amount), 0)           AS total_tax,
          COALESCE(AVG(total), 0)                AS average_sale,
-         COALESCE(SUM(CASE WHEN status='refunded' THEN total ELSE 0 END), 0) AS total_refunds
+         (SELECT COALESCE(SUM(refund_amount), 0) FROM returns
+          WHERE created_at BETWEEN $1 AND $2)   AS total_refunds
        FROM sales
        WHERE created_at BETWEEN $1 AND $2 AND status != 'held'`,
       [startDate, endDate]
     );
 
-    // Calculate cost of goods sold and profit from completed sales
+    // Cost of goods sold and profit — every completed sale, minus whatever
+    // was later returned (partially returned bills still count for the rest).
     const { rows: profitRows } = await query(
       `SELECT
-         COALESCE(SUM(si.line_total), 0)                 AS goods_revenue,
-         COALESCE(SUM(si.cost_price * si.quantity), 0)   AS total_cost
+         COALESCE(SUM(si.line_total - COALESCE(r.refunded, 0)), 0)               AS goods_revenue,
+         COALESCE(SUM(si.cost_price * (si.quantity - COALESCE(r.qty, 0))), 0)   AS total_cost
        FROM sale_items si
        JOIN sales s ON si.sale_id = s.id
-       WHERE s.created_at BETWEEN $1 AND $2 AND s.status = 'completed'`,
+       LEFT JOIN (
+         SELECT sale_item_id, SUM(quantity) AS qty, SUM(refund_amount) AS refunded
+         FROM return_items GROUP BY sale_item_id
+       ) r ON r.sale_item_id = si.id
+       WHERE s.created_at BETWEEN $1 AND $2
+         AND s.status IN ('completed', 'partially_refunded', 'refunded')`,
       [startDate, endDate]
     );
 
@@ -85,6 +92,28 @@ const ReportModel = {
          AND s.status = 'completed'
        GROUP BY u.id, u.name, u.role
        ORDER BY total_revenue DESC`,
+      [startDate, endDate]
+    );
+    return rows;
+  },
+
+  // Every cashier-given discount (bargain + bill share) — who gave it, who
+  // approved it, and why.
+  getDiscountLog: async ({ startDate, endDate }) => {
+    const { rows } = await query(
+      `SELECT d.id, d.created_at, d.discount_amount, d.discount_percent, d.reason,
+              s.receipt_seq, s.id AS sale_id,
+              u.name AS cashier_name, a.name AS approved_by_name,
+              p.name AS product_name, pv.size, pv.color
+       FROM discount_logs d
+       JOIN sales s ON d.sale_id = s.id
+       JOIN users u ON d.user_id = u.id
+       LEFT JOIN users a ON d.approved_by = a.id
+       LEFT JOIN product_variants pv ON d.variant_id = pv.id
+       LEFT JOIN products p ON pv.product_id = p.id
+       WHERE d.created_at BETWEEN $1 AND $2
+       ORDER BY d.created_at DESC
+       LIMIT 500`,
       [startDate, endDate]
     );
     return rows;

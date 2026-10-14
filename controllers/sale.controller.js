@@ -1,5 +1,7 @@
 import SaleModel from '../models/sale.model.js';
 import ShiftModel from '../models/shift.model.js';
+import SettingsModel from '../models/settings.model.js';
+import { signApproval, verifyApproval, checkApproverPin } from '../utils/approval.js';
 
 const SaleController = {
 
@@ -14,16 +16,75 @@ const SaleController = {
         });
       }
 
+      const limits = await SettingsModel.getDiscountLimits();
+      const discountLimit = Number(limits[req.user.role] ?? 0);
+
+      // An approval only counts for the cashier and checkout it was issued for.
+      let approval = null;
+      if (req.body.approvalToken) {
+        const decoded = verifyApproval('discount', req.body.approvalToken);
+        if (decoded
+            && decoded.cashierId === req.user.id
+            && decoded.idempotencyKey === req.body.idempotencyKey) {
+          approval = decoded;
+        }
+      }
+
+      // Exchange where the shop pays money back: a cashier's cash refund needs
+      // a manager's approval for that original bill.
+      let refundApproval = null;
+      if (req.body.exchange?.refundApprovalToken) {
+        const decoded = verifyApproval('refund', req.body.exchange.refundApprovalToken);
+        if (decoded
+            && decoded.cashierId === req.user.id
+            && decoded.originalSaleId === req.body.exchange.originalSaleId) {
+          refundApproval = decoded;
+        }
+      }
+
       const sale = await SaleModel.create({
         ...req.body,
         userId: req.user.id,
+        userRole: req.user.role,
         shiftId: shift.id,
+        discountLimit,
+        approval,
+        refundApproval,
       });
       res.status(201).json({
         success: true,
         data: sale,
         message: 'Sale completed.',
       });
+    } catch (err) { next(err); }
+  },
+
+  // Manager/admin enters their PIN at the till to approve an over-limit
+  // discount. Returns a token the checkout then carries.
+  approveDiscount: async (req, res, next) => {
+    try {
+      const { approverId, pin, idempotencyKey, percent } = req.body;
+      const approver = await checkApproverPin(approverId, pin);
+      if (!approver) {
+        return res.status(403).json({ success: false, message: 'Wrong PIN.' });
+      }
+
+      const limits = await SettingsModel.getDiscountLimits();
+      const approverLimit = Number(limits[approver.role] ?? 0);
+      if (Number(percent) > approverLimit + 0.01) {
+        return res.status(403).json({
+          success: false,
+          message: `${approver.name} can approve up to ${approverLimit}% only.`,
+        });
+      }
+
+      const token = signApproval('discount', {
+        approverId: approver.id,
+        cashierId: req.user.id,
+        idempotencyKey,
+        maxPercent: Number(percent),
+      });
+      res.json({ success: true, data: { token, approverName: approver.name } });
     } catch (err) { next(err); }
   },
 
@@ -50,6 +111,17 @@ const SaleController = {
         });
       }
       res.json({ success: true, data: sale });
+    } catch (err) { next(err); }
+  },
+
+  getRecent: async (req, res, next) => {
+    try {
+      const sales = await SaleModel.findAll({
+        userId: req.user.role === 'cashier' ? req.user.id : undefined,
+        status: 'completed',
+        limit: 30,
+      });
+      res.json({ success: true, data: sales });
     } catch (err) { next(err); }
   },
 

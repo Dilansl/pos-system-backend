@@ -17,4 +17,6 @@ router.get('/by-staff', ReportController.getByStaff);
 
 router.get('/payments', ReportController.getPaymentBreakdown);
 
+router.get('/discounts', ReportController.getDiscountLog);
+
 export default router;

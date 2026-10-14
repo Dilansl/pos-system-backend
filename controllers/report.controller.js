@@ -34,6 +34,14 @@ const ReportController = {
     } catch (err) { next(err); }
   },
 
+  getDiscountLog: async (req, res, next) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const data = await ReportModel.getDiscountLog({ startDate, endDate });
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
   getPaymentBreakdown: async (req, res, next) => {
     try {
       const { startDate, endDate } = req.query;
