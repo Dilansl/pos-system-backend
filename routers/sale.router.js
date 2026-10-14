@@ -16,6 +16,9 @@ router.get('/summary', anyStaff, SaleController.getDailySummary);
 
 router.get('/receipt/:seq', anyStaff, SaleController.getByReceiptSeq);
 
+// Recent receipts for reprinting at the till (cashiers: only their own).
+router.get('/recent', anyStaff, SaleController.getRecent);
+
 router.post('/discount-approval', anyStaff, pinLimiter, [
   body('approverId').isUUID().withMessage('Pick a manager.'),
   body('pin').matches(/^\d{4,6}$/).withMessage('PIN must be 4 to 6 digits.'),

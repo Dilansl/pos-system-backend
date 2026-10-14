@@ -114,6 +114,17 @@ const SaleController = {
     } catch (err) { next(err); }
   },
 
+  getRecent: async (req, res, next) => {
+    try {
+      const sales = await SaleModel.findAll({
+        userId: req.user.role === 'cashier' ? req.user.id : undefined,
+        status: 'completed',
+        limit: 30,
+      });
+      res.json({ success: true, data: sales });
+    } catch (err) { next(err); }
+  },
+
   getAll: async (req, res, next) => {
     try {
       const { startDate, endDate, userId, status, limit, offset } = req.query;
